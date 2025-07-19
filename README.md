@@ -2,7 +2,9 @@
 
 A cross-platform Python tool for visualizing SageMotion (or other IMU) quaternion CSV/XLSX data with synchronized 3D model animation using VTK.
 
+![vid](https://github.com/user-attachments/assets/8751fccd-91cf-42fd-b72f-9dd34a2415aa)
 ---
+
 
 ## Features
 
