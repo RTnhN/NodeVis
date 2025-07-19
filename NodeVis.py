@@ -122,7 +122,7 @@ def _init_3D_scene(
 
     vtk_renderer.GradientBackgroundOn()
     default_camera = vtk_renderer.GetActiveCamera()
-    default_camera.SetPosition(0.5, 0.5, 0.5)
+    default_camera.SetPosition(0, -3, 0)
     default_camera.SetFocalPoint((nsensors - 1) * offset_spacing / 2, 0, 0)
     default_camera.SetViewUp(0, 0, 1)
     default_camera.SetClippingRange(0.1, 2000.0)
