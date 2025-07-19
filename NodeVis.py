@@ -190,7 +190,7 @@ def _init_3D_scene(
         follower = vtkFollower()
         follower.SetMapper(text_mapper)
         follower.SetScale(0.1, 0.1, 0.1)
-        follower.SetPosition((i * offset_spacing) - 0.05, 0, 0.1)
+        follower.SetPosition((i * offset_spacing) - 0.01, 0.01, 0.1)
         follower.GetProperty().SetColor(1, 1, 0)
         vtk_renderer.AddActor(follower)
         followers.append(follower)
