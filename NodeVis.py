@@ -226,14 +226,19 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Visualize CSV quaternions with VTK and a 3D board model (multi-IMU)."
+        description="Visualize CSV quaternions with VTK and a 3D board model (multi-IMU).",
     )
     parser.add_argument(
-        "csv", help="CSV file with quaternion columns for multiple sensors"
+        "SageMotion_data_file",
+        help="SageMotion Data File (.csv or .xlsx)",
     )
     args = parser.parse_args()
-
-    sensor_data = pd.read_csv(args.csv)
+    if args.SageMotion_data_file.endswith(".csv"):
+        sensor_data = pd.read_csv(args.SageMotion_data_file)
+    elif args.SageMotion_data_file.endswith(".xlsx"):
+        sensor_data = pd.read_excel(args.SageMotion_data_file)
+    else:
+        raise ValueError("Invalid file type. Must be .csv or .xlsx")
     # Find all sensors
     sensor_names = [
         c.split("Quat1_")[1] for c in sensor_data.columns if c.startswith("Quat1_")
