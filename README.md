@@ -37,7 +37,7 @@ A cross-platform Python tool for visualizing SageMotion (or other IMU) quaternio
 
 1. Prepare your IMU data in CSV or XLSX format with columns for each sensor:
 
-   * Example column names: `Quat1_SENSOR`, `Quat2_SENSOR`, `Quat3_SENSOR`, `Quat4_SENSOR` (one set per sensor).
+   * Example column names: `Quat1_SENSOR`, `Quat2_SENSOR`, `Quat3_SENSOR`, `Quat4_SENSOR` (one set per sensor). Quaternions are in the scaler first order (w, x, y, z).
    * The script auto-detects available sensors by scanning these columns.
 
 2. Run the script:
