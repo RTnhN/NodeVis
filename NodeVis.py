@@ -226,7 +226,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Visualize CSV quaternions with VTK and a 3D board model (multi-IMU).",
+        description="Visualize CSV quaternions with VTK.",
     )
     parser.add_argument(
         "SageMotion_data_file",
