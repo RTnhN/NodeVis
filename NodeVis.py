@@ -182,9 +182,9 @@ def _init_3D_scene(
         sensor_assemblies.append(assembly)
 
     followers = []
-    for i, sensor_name in enumerate(sensor_names):
+    for i, _ in enumerate(sensor_names):
         vector_text = vtk.vtkVectorText()
-        vector_text.SetText(sensor_name)
+        vector_text.SetText(i + 1)
         text_mapper = vtk.vtkPolyDataMapper()
         text_mapper.SetInputConnection(vector_text.GetOutputPort())
         follower = vtkFollower()
