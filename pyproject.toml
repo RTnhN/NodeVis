@@ -1,7 +1,7 @@
 [project]
-name = "streaming"
+name = "NodeVis"
 version = "0.1.0"
-description = "Add your description here"
+description = "A cross-platform Python tool for visualizing SageMotion (or other IMU) quaternion CSV/XLSX data with synchronized 3D model animation using VTK."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
