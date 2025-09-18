@@ -18,6 +18,7 @@ frames_list: list[np.ndarray] = []
 sensor_assemblies: list[vtkAssembly] = []
 offset_spacing: float = 0.2  # space between each IMU model
 followers: list[vtkFollower] = []
+spin_center_actor: vtk.vtkActor | None = None  # **SPIN CENTER**
 
 
 class vtkMatrix4x4Customized(vtk.vtkMatrix4x4):
@@ -32,6 +33,119 @@ class vtkMatrix4x4Customized(vtk.vtkMatrix4x4):
         for i in range(4):
             for j in range(4):
                 self.SetElement(i, j, mat[i, j])
+
+
+def update_spin_center() -> None:
+    global spin_center_actor, vtk_renderer
+    if spin_center_actor and vtk_renderer:
+        camera = vtk_renderer.GetActiveCamera()
+        fp = camera.GetFocalPoint()
+        spin_center_actor.SetPosition(*fp)
+        vtk_render_window.Render()
+
+
+def _parse_quaternion_string(raw_value: object) -> np.ndarray:
+    if pd.isna(raw_value):
+        raise ValueError("Encountered NaN quaternion value.")
+    raw_text = str(raw_value).strip()
+    if not raw_text:
+        raise ValueError("Encountered empty quaternion value.")
+    if "," in raw_text:
+        parts = [part.strip() for part in raw_text.split(",")]
+    else:
+        parts = raw_text.split()
+    if len(parts) != 4:
+        raise ValueError(
+            f"Quaternion '{raw_text}' does not have four components.",
+        )
+    try:
+        return np.array([float(part) for part in parts], dtype=float)
+    except ValueError as exc:
+        raise ValueError(
+            f"Quaternion '{raw_text}' contains non-numeric data.",
+        ) from exc
+
+
+def _load_csv_or_excel(file_path: Path) -> tuple[list[str], list[np.ndarray]]:
+    if file_path.suffix.lower() == ".csv":
+        sensor_data = pd.read_csv(file_path)
+    else:
+        sensor_data = pd.read_excel(file_path)
+
+    sensor_names = [
+        column.split("Quat1_")[1] for column in sensor_data.columns if column.startswith("Quat1_")
+    ]
+    if not sensor_names:
+        raise ValueError(
+            "No sensors were detected. Columns must follow the 'Quat1_NAME' pattern.",
+        )
+    frames = [
+        sensor_data[
+            [f"Quat1_{name}", f"Quat2_{name}", f"Quat3_{name}", f"Quat4_{name}"]
+        ].to_numpy()
+        for name in sensor_names
+    ]
+    return sensor_names, frames
+
+
+def _load_sto(file_path: Path) -> tuple[list[str], list[np.ndarray]]:
+    with file_path.open("r", encoding="utf-8") as sto_file:
+        header_end_index = None
+        for idx, line in enumerate(sto_file):
+            if line.strip().lower() == "endheader":
+                header_end_index = idx
+                break
+    if header_end_index is None:
+        raise ValueError(f"The file '{file_path}' is missing an 'endheader' line.")
+
+    sto_data = pd.read_csv(
+        file_path,
+        sep=r"\s+",
+        skiprows=header_end_index + 1,
+        engine="python",
+    )
+    sto_data.columns = [str(column).strip() for column in sto_data.columns]
+
+    sensor_names: list[str] = []
+    frames: list[np.ndarray] = []
+    for column in sto_data.columns:
+        if column.lower() == "time":
+            continue
+        column_series = sto_data[column]
+        valid_values = [
+            str(value).strip()
+            for value in column_series
+            if not pd.isna(value) and str(value).strip()
+        ]
+        if not valid_values:
+            continue
+        if valid_values[0].count(",") != 3 and len(valid_values[0].split()) != 4:
+            continue
+        try:
+            quaternions = np.vstack(
+                [_parse_quaternion_string(value) for value in column_series]
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"Column '{column}' in '{file_path}' does not contain valid quaternion data.",
+            ) from exc
+        sensor_names.append(column)
+        frames.append(quaternions)
+
+    if not frames:
+        raise ValueError(
+            f"No quaternion columns were found in '{file_path}'.",
+        )
+    return sensor_names, frames
+
+
+def _load_sensor_data(file_path: Path) -> tuple[list[str], list[np.ndarray]]:
+    suffix = file_path.suffix.lower()
+    if suffix in {".csv", ".xlsx"}:
+        return _load_csv_or_excel(file_path)
+    if suffix == ".sto":
+        return _load_sto(file_path)
+    raise ValueError("Invalid file type. Must be .csv, .xlsx, or .sto")
 
 
 def _update_frame(idx: int) -> None:
@@ -53,6 +167,7 @@ def _update_frame(idx: int) -> None:
     camera = vtk_renderer.GetActiveCamera()
     for follower in followers:
         follower.SetCamera(camera)
+    update_spin_center()  # **SPIN CENTER**
 
 
 def _slider_callback(obj: vtk.vtkSliderWidget, event: vtk.vtkObject) -> None:
@@ -99,7 +214,7 @@ def _add_slider_widget(
 def _init_3D_scene(
     board_file_name: Path, nframes: int, nsensors: int, sensor_names: list[str]
 ):
-    global text_actor, vtk_render_window, vtk_renderer, sensor_assemblies, followers
+    global text_actor, vtk_render_window, vtk_renderer, sensor_assemblies, followers, spin_center_actor
     data_root = Path(__file__).parent
     importer = vtk.vtkGLTFImporter()
     importer.SetFileName(str(Path(data_root) / board_file_name))
@@ -195,6 +310,19 @@ def _init_3D_scene(
         vtk_renderer.AddActor(follower)
         followers.append(follower)
 
+    spin_center = vtk.vtkSphereSource()
+    spin_center.SetRadius(0.005)
+    spin_center.SetThetaResolution(16)
+    spin_center.SetPhiResolution(16)
+    spin_center_mapper = vtk.vtkPolyDataMapper()
+    spin_center_mapper.SetInputConnection(spin_center.GetOutputPort())
+    spin_center_actor = vtk.vtkActor()
+    spin_center_actor.SetMapper(spin_center_mapper)
+    spin_center_actor.GetProperty().SetColor(1, 0, 0)
+    fp = default_camera.GetFocalPoint()
+    spin_center_actor.SetPosition(*fp)
+    vtk_renderer.AddActor(spin_center_actor)
+
     vtk_render_window.Render()
     camera = vtk_renderer.GetActiveCamera()
     for follower in followers:
@@ -202,11 +330,13 @@ def _init_3D_scene(
 
     _update_frame(0)
     vtk_render_window_interactor.AddObserver("KeyPressEvent", zoom_to_node)
+    vtk_render_window_interactor.AddObserver(
+        "InteractionEvent", lambda o, e: update_spin_center()
+    )
     vtk_render_window_interactor.Start()
 
 
 def zoom_to_node(obj, event):
-    # Check if Ctrl is held
     if obj.GetControlKey():
         key = obj.GetKeySym()
         if key.isdigit():
@@ -219,6 +349,7 @@ def zoom_to_node(obj, event):
                 camera.SetViewUp(0, 0, 1)
                 vtk_renderer.ResetCameraClippingRange()
                 vtk_render_window.Render()
+                update_spin_center()  # **SPIN CENTER**
 
 
 def main():
@@ -226,31 +357,28 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Visualize CSV quaternions with VTK.",
+        description="Visualize IMU quaternion data with VTK.",
     )
     parser.add_argument(
         "SageMotion_data_file",
-        help="SageMotion Data File (.csv or .xlsx)",
+        help="SageMotion Data File (.csv, .xlsx, or .sto)",
     )
     args = parser.parse_args()
-    if args.SageMotion_data_file.endswith(".csv"):
-        sensor_data = pd.read_csv(args.SageMotion_data_file)
-    elif args.SageMotion_data_file.endswith(".xlsx"):
-        sensor_data = pd.read_excel(args.SageMotion_data_file)
-    else:
-        raise ValueError("Invalid file type. Must be .csv or .xlsx")
-    # Find all sensors
-    sensor_names = [
-        c.split("Quat1_")[1] for c in sensor_data.columns if c.startswith("Quat1_")
-    ]
+    data_file = Path(args.SageMotion_data_file)
+    if not data_file.exists():
+        raise FileNotFoundError(f"Could not find data file '{data_file}'.")
+
+    sensor_names, loaded_frames = _load_sensor_data(data_file)
+    if not loaded_frames:
+        raise ValueError("No sensor quaternion data was found in the provided file.")
+
+    frame_counts = {frame.shape[0] for frame in loaded_frames}
+    if len(frame_counts) != 1:
+        raise ValueError("All sensors must contain the same number of frames.")
+
+    frames_list = loaded_frames
     nsensors = len(sensor_names)
-    frames_list = [
-        sensor_data[
-            [f"Quat1_{name}", f"Quat2_{name}", f"Quat3_{name}", f"Quat4_{name}"]
-        ].to_numpy()
-        for name in sensor_names
-    ]
-    nframes = len(frames_list[0])
+    nframes = frame_counts.pop()
     _init_3D_scene("Node.glb", nframes, nsensors, sensor_names)
 
 
