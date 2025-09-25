@@ -73,7 +73,9 @@ def _load_csv_or_excel(file_path: Path) -> tuple[list[str], list[np.ndarray]]:
         sensor_data = pd.read_excel(file_path)
 
     sensor_names = [
-        column.split("Quat1_")[1] for column in sensor_data.columns if column.startswith("Quat1_")
+        column.split("Quat1_")[1]
+        for column in sensor_data.columns
+        if column.startswith("Quat1_")
     ]
     if not sensor_names:
         raise ValueError(
@@ -352,8 +354,42 @@ def zoom_to_node(obj, event):
                 update_spin_center()  # **SPIN CENTER**
 
 
-def main():
+def _run_viewer(data_file: Path):
     global frames_list
+    if not data_file.exists():
+        raise FileNotFoundError(f"Could not find data file '{data_file}'.")
+    sensor_names, loaded_frames = _load_sensor_data(data_file)
+    if not loaded_frames:
+        raise ValueError("No sensor quaternion data was found in the provided file.")
+    frame_counts = {frame.shape[0] for frame in loaded_frames}
+    if len(frame_counts) != 1:
+        raise ValueError("All sensors must contain the same number of frames.")
+    frames_list = loaded_frames
+    nsensors = len(sensor_names)
+    nframes = frame_counts.pop()
+    _init_3D_scene("Node.glb", nframes, nsensors, sensor_names)
+
+
+def _context_launch(filenames, params):
+    if not filenames:
+        return
+    print("Running NodeViz viewer with the following file:", filenames[0])
+    _run_viewer(Path(filenames[0]))
+
+
+def _install_context_menu() -> None:
+    from context_menu import menus
+
+    cm = menus.ContextMenu("", type="FILES")
+    cm.add_items(
+        [
+            menus.ContextCommand("Open in NodeViz", python=_context_launch),
+        ],
+    )
+    cm.compile()
+
+
+def main():
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -362,24 +398,20 @@ def main():
     parser.add_argument(
         "SageMotion_data_file",
         help="SageMotion Data File (.csv, .xlsx, or .sto)",
+        nargs="?",
+    )
+    parser.add_argument(
+        "--install-context-menu",
+        action="store_true",
+        help="Install a right-click context menu entry that opens selected files in this viewer.",
     )
     args = parser.parse_args()
-    data_file = Path(args.SageMotion_data_file)
-    if not data_file.exists():
-        raise FileNotFoundError(f"Could not find data file '{data_file}'.")
 
-    sensor_names, loaded_frames = _load_sensor_data(data_file)
-    if not loaded_frames:
-        raise ValueError("No sensor quaternion data was found in the provided file.")
+    if args.install_context_menu:
+        _install_context_menu()
+        return
 
-    frame_counts = {frame.shape[0] for frame in loaded_frames}
-    if len(frame_counts) != 1:
-        raise ValueError("All sensors must contain the same number of frames.")
-
-    frames_list = loaded_frames
-    nsensors = len(sensor_names)
-    nframes = frame_counts.pop()
-    _init_3D_scene("Node.glb", nframes, nsensors, sensor_names)
+    _run_viewer(Path(args.SageMotion_data_file))
 
 
 if __name__ == "__main__":
