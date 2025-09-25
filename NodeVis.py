@@ -380,13 +380,25 @@ def _context_launch(filenames, params):
 def _install_context_menu() -> None:
     from context_menu import menus
 
-    cm = menus.ContextMenu("", type="FILES")
+    cm = menus.ContextMenu("NodeViz", type="FILES")
     cm.add_items(
         [
             menus.ContextCommand("Open in NodeViz", python=_context_launch),
         ],
     )
     cm.compile()
+
+
+def _uninstall_context_menu() -> None:
+    from context_menu import menus
+
+    cm = menus.ContextMenu("NodeViz", type="FILES")
+    cm.add_items(
+        [
+            menus.ContextCommand("Open in NodeViz", python=_context_launch),
+        ]
+    )
+    cm.remove()
 
 
 def main():
@@ -405,10 +417,20 @@ def main():
         action="store_true",
         help="Install a right-click context menu entry that opens selected files in this viewer.",
     )
+
+    parser.add_argument(
+        "--uninstall-context-menu",
+        action="store_true",
+        help="Remove the NodeViz entry from the right-click context menu.",
+    )
     args = parser.parse_args()
 
     if args.install_context_menu:
         _install_context_menu()
+        return
+
+    if args.uninstall_context_menu:
+        _uninstall_context_menu()
         return
 
     _run_viewer(Path(args.SageMotion_data_file))
