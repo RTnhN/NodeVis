@@ -10,6 +10,7 @@ A cross-platform Python tool for visualizing SageMotion (or other IMU) quaternio
 
 * Visualize up to 8 nodes at once in a single window, each using the same 3D model
 * Real-time quaternion-driven animation with a frame slider
+* Live-stream SageMotion node orientations over the network for a continuous view
 * Camera controls via mouse and keyboard
 * 3D orientation axis and sensor index labels
 * Camera shortcuts: Ctrl+1 through Ctrl+8 jump to each node
@@ -53,6 +54,26 @@ A cross-platform Python tool for visualizing SageMotion (or other IMU) quaternio
    # or
    uv run python NodeVis.py your_data.xlsx
    ```
+
+### Stream live SageMotion data
+
+1. Make sure a SageMotion app is running on your network.
+2. Launch NodeViz with the stream address (no data file needed):
+
+   ```sh
+   uv run python NodeVis.py --stream-address 192.168.137.1
+   # or
+   uv run python NodeVis.py --stream-address 192.168.12.1
+   # or
+   uv run python NodeVis.py --stream-address 192.168.1.xxx
+   ```
+
+3. Optional flags:
+
+   * `--stream-port` - override the default port (`5678`).
+   * `--stream-log-time` - request the stream's `universal_time` values alongside quaternions.
+
+During streaming the frame slider is disabled and the viewer refreshes automatically as new samples arrive (about 20 updates/sec). Up to 8 sensors are requested from the stream, matching the offline viewer limit.
 
 ### Install / uninstall Windows context menu entry
 
