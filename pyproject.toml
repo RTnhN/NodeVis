@@ -9,6 +9,10 @@ dependencies = [
     "numpy>=2.3.1",
     "openpyxl>=3.1.5",
     "pandas>=2.3.1",
+    "sagemotion-client",
     "scipy>=1.16.0",
     "vtk>=9.5.0",
 ]
+
+[tool.uv.sources]
+sagemotion-client = { git = "https://github.com/RTnhN/SageMotion_Client.git" }

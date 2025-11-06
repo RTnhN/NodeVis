@@ -1,7 +1,19 @@
 from __future__ import annotations
 
-import os
+from collections.abc import Sequence
 from pathlib import Path
+import sys
+from time import monotonic
+
+CURRENT_DIR = Path(__file__).parent
+CLIENT_ROOT = CURRENT_DIR / "SageMotion_Client"
+if CLIENT_ROOT.exists():
+    sys.path.insert(0, str(CLIENT_ROOT))
+
+try:
+    from sagemotion_client.DataStreamClient import DataStreamClient
+except ModuleNotFoundError:
+    from DataStreamClient import DataStreamClient
 
 import numpy as np
 import pandas as pd
@@ -19,6 +31,9 @@ sensor_assemblies: list[vtkAssembly] = []
 offset_spacing: float = 0.2  # space between each IMU model
 followers: list[vtkFollower] = []
 spin_center_actor: vtk.vtkActor | None = None  # **SPIN CENTER**
+slider_widget: vtk.vtkSliderWidget | None = None
+STREAM_SENSOR_REQUEST_COUNT = 8
+STREAM_UPDATE_INTERVAL_SECONDS = 1 / 20
 
 
 class vtkMatrix4x4Customized(vtk.vtkMatrix4x4):
@@ -42,6 +57,38 @@ def update_spin_center() -> None:
         fp = camera.GetFocalPoint()
         spin_center_actor.SetPosition(*fp)
         vtk_render_window.Render()
+
+
+def _apply_sensor_rotations(
+    quaternions: Sequence[np.ndarray | Sequence[float] | None],
+) -> None:
+    global sensor_assemblies
+    for i, assembly in enumerate(sensor_assemblies):
+        if i >= len(quaternions):
+            continue
+        quat_value = quaternions[i]
+        if quat_value is None:
+            continue
+        quat = np.asarray(quat_value, dtype=float)
+        if quat.shape != (4,):
+            continue
+        rot_mat = R.from_quat(quat, scalar_first=True).as_matrix()
+        rot_mat4x4 = np.pad(rot_mat, ((0, 1), (0, 1)), "constant")
+        rot_mat4x4[3, 3] = 1
+        rot_mat4x4[:3, 3] = [i * offset_spacing, 0, 0]
+        temp_matrix = vtkMatrix4x4Customized(rot_mat4x4)
+        if hasattr(assembly, "SetUserMatrix"):
+            assembly.SetUserMatrix(temp_matrix)
+
+
+def _refresh_scene() -> None:
+    if vtk_render_window:
+        vtk_render_window.Render()
+    if vtk_renderer:
+        camera = vtk_renderer.GetActiveCamera()
+        for follower in followers:
+            follower.SetCamera(camera)
+    update_spin_center()  # **SPIN CENTER**
 
 
 def _parse_quaternion_string(raw_value: object) -> np.ndarray:
@@ -151,25 +198,19 @@ def _load_sensor_data(file_path: Path) -> tuple[list[str], list[np.ndarray]]:
 
 
 def _update_frame(idx: int) -> None:
-    global frames_list, sensor_assemblies, vtk_render_window, text_actor, followers
-    for i, assembly in enumerate(sensor_assemblies):
-        frames = frames_list[i]
-        if idx < 0 or idx >= len(frames):
-            continue
-        rotate_data = frames[idx]
-        rot_mat = R.from_quat(rotate_data, scalar_first=True).as_matrix()
-        rot_mat4x4 = np.pad(rot_mat, ((0, 1), (0, 1)), "constant")
-        rot_mat4x4[3, 3] = 1
-        rot_mat4x4[:3, 3] = [i * offset_spacing, 0, 0]  # Offset X
-        temp_matrix = vtkMatrix4x4Customized(rot_mat4x4)
-        if hasattr(assembly, "SetUserMatrix"):
-            assembly.SetUserMatrix(temp_matrix)
-    text_actor.SetInput(f"Frame: {idx}")
-    vtk_render_window.Render()
-    camera = vtk_renderer.GetActiveCamera()
-    for follower in followers:
-        follower.SetCamera(camera)
-    update_spin_center()  # **SPIN CENTER**
+    global frames_list, text_actor
+    if idx < 0 or not frames_list:
+        return
+    quaternions: list[np.ndarray] = []
+    for frames in frames_list:
+        if idx >= len(frames):
+            quaternions.append(frames[-1])
+        else:
+            quaternions.append(frames[idx])
+    _apply_sensor_rotations(quaternions)
+    if text_actor:
+        text_actor.SetInput(f"Frame: {idx}")
+    _refresh_scene()
 
 
 def _slider_callback(obj: vtk.vtkSliderWidget, event: vtk.vtkObject) -> None:
@@ -214,9 +255,15 @@ def _add_slider_widget(
 
 
 def _init_3D_scene(
-    board_file_name: Path, nframes: int, nsensors: int, sensor_names: list[str]
-):
-    global text_actor, vtk_render_window, vtk_renderer, sensor_assemblies, followers, spin_center_actor
+    board_file_name: Path,
+    nframes: int,
+    nsensors: int,
+    sensor_names: list[str],
+    *,
+    enable_slider: bool = True,
+    initial_text: str = "Frame: 0",
+) -> vtk.vtkRenderWindowInteractor:
+    global text_actor, vtk_render_window, vtk_renderer, sensor_assemblies, followers, spin_center_actor, slider_widget
     data_root = Path(__file__).parent
     importer = vtk.vtkGLTFImporter()
     importer.SetFileName(str(Path(data_root) / board_file_name))
@@ -250,7 +297,7 @@ def _init_3D_scene(
     vtk_render_window.SetWindowName("SageMotion CSV Playback Demo")
 
     text_actor = vtk.vtkTextActor()
-    text_actor.SetInput("Frame: 0")
+    text_actor.SetInput(initial_text)
     text_actor.GetTextProperty().SetFontSize(36)
     text_actor.GetTextProperty().SetColor(1, 1, 1)
     text_actor.SetDisplayPosition(40, 700)
@@ -259,10 +306,12 @@ def _init_3D_scene(
     vtk_render_window_interactor.Initialize()
     vtk_render_window.Render()
 
-    slider_widget = _add_slider_widget(vtk_render_window_interactor, nframes)
-    slider_widget.EnabledOff()
-    slider_widget.EnabledOn()
-    vtk_render_window.Render()
+    slider_widget = None
+    if enable_slider and nframes > 0:
+        slider_widget = _add_slider_widget(vtk_render_window_interactor, nframes)
+        slider_widget.EnabledOff()
+        slider_widget.EnabledOn()
+        vtk_render_window.Render()
 
     axes = vtk.vtkAxesActor()
     axes.SetTotalLength(200, 200, 200)
@@ -330,12 +379,11 @@ def _init_3D_scene(
     for follower in followers:
         follower.SetCamera(camera)
 
-    _update_frame(0)
     vtk_render_window_interactor.AddObserver("KeyPressEvent", zoom_to_node)
     vtk_render_window_interactor.AddObserver(
         "InteractionEvent", lambda o, e: update_spin_center()
     )
-    vtk_render_window_interactor.Start()
+    return vtk_render_window_interactor
 
 
 def zoom_to_node(obj, event):
@@ -354,7 +402,7 @@ def zoom_to_node(obj, event):
                 update_spin_center()  # **SPIN CENTER**
 
 
-def _run_viewer(data_file: Path):
+def _run_viewer(data_file: Path) -> None:
     global frames_list
     if not data_file.exists():
         raise FileNotFoundError(f"Could not find data file '{data_file}'.")
@@ -367,7 +415,134 @@ def _run_viewer(data_file: Path):
     frames_list = loaded_frames
     nsensors = len(sensor_names)
     nframes = frame_counts.pop()
-    _init_3D_scene("Node.glb", nframes, nsensors, sensor_names)
+    interactor = _init_3D_scene(Path("Node.glb"), nframes, nsensors, sensor_names)
+    _update_frame(0)
+    interactor.Start()
+
+
+def _extract_quaternions_from_raw_data(raw_data: object) -> list[np.ndarray | None]:
+    quat_keys = ("Quat1", "Quat2", "Quat3", "Quat4")
+    if not isinstance(raw_data, Sequence) or isinstance(raw_data, (bytes, str)):
+        return []
+    quaternions: list[np.ndarray | None] = []
+    for sensor in raw_data:
+        if not isinstance(sensor, dict):
+            quaternions.append(None)
+            continue
+        try:
+            quat = np.array([float(sensor[key]) for key in quat_keys], dtype=float)
+        except (KeyError, TypeError, ValueError):
+            quaternions.append(None)
+            continue
+        quaternions.append(quat)
+    return quaternions
+
+
+def _run_stream_viewer(
+    stream_address: str,
+    *,
+    stream_port: int = 5678,
+    request_log_time: bool = False,
+) -> None:
+    from queue import Empty, Queue
+    import threading
+
+    global frames_list
+    frames_list = []
+
+    data_queue: Queue[tuple[int, dict[str, object]]] = Queue()
+    fields = ("Quat1", "Quat2", "Quat3", "Quat4")
+    requested_data: list[list[object]] = [
+        [sensor_idx, field]
+        for sensor_idx in range(STREAM_SENSOR_REQUEST_COUNT)
+        for field in fields
+    ]
+    requested_data.append([None, "raw_data"])
+
+    if request_log_time:
+        requested_data.append([None, "universal_time"])
+
+    client = DataStreamClient(
+        stream_address,
+        queue=data_queue,
+        port=stream_port,
+        requested_data=requested_data,
+    )
+    client_thread = threading.Thread(target=client.run_forever, daemon=True)
+    client_thread.start()
+
+    raw_data: object | None = None
+    try:
+        while True:
+            _, first_payload = data_queue.get(timeout=10)
+            raw_data = (
+                first_payload.get("raw_data")
+                if isinstance(first_payload, dict)
+                else None
+            )
+            quaternions = _extract_quaternions_from_raw_data(raw_data)
+            if quaternions:
+                break
+    except Empty as exc:
+        raise RuntimeError(
+            "No data received from the SageMotion stream within 10 seconds.",
+        ) from exc
+
+    if not isinstance(raw_data, Sequence) or isinstance(raw_data, (bytes, str)):
+        raw_data = []
+    nsensors = len(raw_data) if raw_data else len(quaternions)
+    if nsensors == 0:
+        raise ValueError("Streaming data did not contain any sensors.")
+
+    sensor_names = [str(i + 1) for i in range(nsensors)]
+    interactor = _init_3D_scene(
+        Path("Node.glb"),
+        1,
+        nsensors,
+        sensor_names,
+        enable_slider=False,
+        initial_text="Streaming frame: 0",
+    )
+
+    _apply_sensor_rotations(quaternions)
+    frame_counter = 1
+    last_render_time = 0.0
+    latest_payload: dict[str, object] | None = None
+    if text_actor:
+        text_actor.SetInput(f"Streaming frame: {frame_counter}")
+    _refresh_scene()
+
+    def _drain_queue(obj, event):
+        nonlocal frame_counter, last_render_time
+        processed = False
+        while True:
+            try:
+                _, payload = data_queue.get_nowait()
+            except Empty:
+                break
+            raw = (
+                payload.get("raw_data")
+                if isinstance(payload, dict)
+                else None
+            )
+            new_quaternions = _extract_quaternions_from_raw_data(raw)
+            if not new_quaternions:
+                continue
+            _apply_sensor_rotations(new_quaternions)
+            frame_counter += 1
+            processed = True
+        if not processed:
+            return
+        now = monotonic()
+        if now - last_render_time > STREAM_UPDATE_INTERVAL_SECONDS:
+            last_render_time = now
+            if text_actor:
+                text_actor.SetInput(f"Streaming frame: {frame_counter}")
+            _refresh_scene()
+
+    interactor.AddObserver("TimerEvent", _drain_queue)
+    interactor.CreateRepeatingTimer(5)
+    interactor.Start()
 
 
 def _context_launch(filenames, params):
@@ -423,6 +598,21 @@ def main():
         action="store_true",
         help="Remove the NodeViz entry from the right-click context menu.",
     )
+    parser.add_argument(
+        "--stream-address",
+        help="IP address of a SageMotion stream provider to visualize live data.",
+    )
+    parser.add_argument(
+        "--stream-port",
+        type=int,
+        default=5678,
+        help="Port for the streaming data source (default: 5678).",
+    )
+    parser.add_argument(
+        "--stream-log-time",
+        action="store_true",
+        help="Request universal_time from the stream alongside quaternions.",
+    )
     args = parser.parse_args()
 
     if args.install_context_menu:
@@ -433,6 +623,18 @@ def main():
         _uninstall_context_menu()
         return
 
+    if args.stream_address:
+        _run_stream_viewer(
+            args.stream_address,
+            stream_port=args.stream_port,
+            request_log_time=args.stream_log_time,
+        )
+        return
+
+    if not args.SageMotion_data_file:
+        parser.error(
+            "You must provide a SageMotion data file or use --stream-address.",
+        )
     _run_viewer(Path(args.SageMotion_data_file))
 
 
