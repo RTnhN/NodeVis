@@ -263,7 +263,14 @@ def _init_3D_scene(
     enable_slider: bool = True,
     initial_text: str = "Frame: 0",
 ) -> vtk.vtkRenderWindowInteractor:
-    global text_actor, vtk_render_window, vtk_renderer, sensor_assemblies, followers, spin_center_actor, slider_widget
+    global \
+        text_actor, \
+        vtk_render_window, \
+        vtk_renderer, \
+        sensor_assemblies, \
+        followers, \
+        spin_center_actor, \
+        slider_widget
     data_root = Path(__file__).parent
     importer = vtk.vtkGLTFImporter()
     importer.SetFileName(str(Path(data_root) / board_file_name))
@@ -358,6 +365,40 @@ def _init_3D_scene(
         follower.SetScale(0.1, 0.1, 0.1)
         follower.SetPosition((i * offset_spacing) - 0.01, 0.01, 0.1)
         follower.GetProperty().SetColor(1, 1, 0)
+        vtk_renderer.AddActor(follower)
+        followers.append(follower)
+
+    # Single world-axis reference at the global origin (not duplicated per node).
+    axis_length = 0.15
+    world_axes = vtk.vtkAxesActor()
+    world_axes.SetTotalLength(axis_length, axis_length, axis_length)
+    world_axes.SetAxisLabels(0)
+    axes_offset = (-offset_spacing * 1.5, 0.0, 0.0)
+    axes_transform = vtk.vtkTransform()
+    axes_transform.Translate(*axes_offset)
+    world_axes.SetUserTransform(axes_transform)
+    vtk_renderer.AddActor(world_axes)
+
+    # Label each axis with a letter so the global orientation is explicit.
+    axis_labels = (
+        ("X", (1.0, 0.2, 0.2), (axis_length + 0.02, 0.0, 0.0)),
+        ("Y", (0.2, 1.0, 0.2), (0.0, axis_length + 0.02, 0.0)),
+        ("Z", (0.2, 0.6, 1.0), (0.0, 0.0, axis_length + 0.02)),
+    )
+    for label_text, color, offset_vec in axis_labels:
+        vector_text = vtk.vtkVectorText()
+        vector_text.SetText(label_text)
+        text_mapper = vtk.vtkPolyDataMapper()
+        text_mapper.SetInputConnection(vector_text.GetOutputPort())
+        follower = vtkFollower()
+        follower.SetMapper(text_mapper)
+        follower.SetScale(0.05, 0.05, 0.05)
+        follower.SetPosition(
+            axes_offset[0] + offset_vec[0],
+            axes_offset[1] + offset_vec[1],
+            axes_offset[2] + offset_vec[2],
+        )
+        follower.GetProperty().SetColor(color)
         vtk_renderer.AddActor(follower)
         followers.append(follower)
 
@@ -520,11 +561,7 @@ def _run_stream_viewer(
                 _, payload = data_queue.get_nowait()
             except Empty:
                 break
-            raw = (
-                payload.get("raw_data")
-                if isinstance(payload, dict)
-                else None
-            )
+            raw = payload.get("raw_data") if isinstance(payload, dict) else None
             new_quaternions = _extract_quaternions_from_raw_data(raw)
             if not new_quaternions:
                 continue
